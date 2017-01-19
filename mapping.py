@@ -17,6 +17,8 @@ parser.add_option("-v", "--verbose", action="store_true", dest="verbose",
 		  help="Prints status messages throughout script runtime.")
 parser.add_option("-o", "--output-directory", dest="outdir",
 		  help="Directory in which to store output. Defaults to current directory.", metavar="OUTDIR")
+parser.add_option("-d", "--default", action="store_true", dest="default",
+    		  help="Provide default settings to bowtie rather than all exact matches.")
 
 (options, args) = parser.parse_args()
 
@@ -40,14 +42,12 @@ readsbase = basename(options.readsfile)
 genomebase = os.path.splitext(genomebase)[0]
 readsbase = os.path.splitext(readsbase)[0]
 
-if os.path.isdir(options.outdir):
-    if not os.path.isdir(options.outdir + "/" + readsbase):
-        subprocess.call(["mkdir", options.outdir + "/" + readsbase])
-else:
+if not os.path.isdir(options.outdir):
     print "Specified output directory does not exist.\n"
-    sys.exit()
+    print "Creating", outdir
+    subprocess.call(["mkdir", outdir])
 
-args = "bowtie-build", options.genomefile, options.outdir + "/" + readsbase + "/" + genomebase
+args = "bowtie-build", options.genomefile, options.outdir + "/" + genomebase
 
 proc = subprocess.Popen(args, stdout=subprocess.PIPE)
 (out, err) = proc.communicate()
@@ -56,11 +56,15 @@ if options.verbose == True:
     print "Bowtie output:", out
     print "\nBowtie indexing of reference genome complete.\n"
 
-args = "bowtie", "-v", "0", "-a", options.outdir + "/" + readsbase + "/" + genomebase, options.readsfile, options.outdir + "/" + readsbase + "/" + readsbase + "." + genomebase  + ".map"
-proc = subprocess.Popen(args, stdout=subprocess.PIPE)
-(out,err) = proc.communicate()
+if options.default == True:
+    args = "bowtie", options.outdir + "/" + genomebase, options.readsfile, "--sam", options.outdir + "/" + readsbase + "." + genomebase  + ".map"
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE)
+    (out,err) = proc.communicate()
+else:
+    args = "bowtie", "-v", "0", "-a", options.outdir + "/" + genomebase, options.readsfile, "--sam", options.outdir + "/" + readsbase + "." + genomebase  + ".map"
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE)
+    (out,err) = proc.communicate()
 
 if options.verbose == True:
     print "Bowtie output:", out
     print "\nBowtie mapping of reads complete.\n"
-
