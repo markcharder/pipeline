@@ -8,6 +8,9 @@ import multiprocessing
 import re
 import optparse
 import time
+import itertools
+import functools
+import glob
 
 # Import custom module from lib folder in current directory.
 scriptpath = os.path.abspath(sys.argv[0])
@@ -17,7 +20,7 @@ sys.path.append(scriptpath + "/" + "lib")
 import filtering
 
 # Get options.
-time = time.strftime("%d/-%m/-%Y %H:%M:%S")
+time = time.strftime("%d/%m/%Y %H:%M:%S")
 
 parser = optparse.OptionParser()
 
@@ -41,7 +44,7 @@ parser.add_option("-o", "--output-dir", dest = "outdir",
 (options, args) = parser.parse_args()
 
 if options.verbose == True:
-    print "Script started at: \n" + time + "\n"
+    print "Script started at: " + time
 
 # Throw errors if options not provided.
 if not options.readsfile:
@@ -67,57 +70,75 @@ if not options.btthreads:
 
 # Test if Bowtie index files exist in database directory.
 files = filtering.get_files(options.rnasfile)
-match = re.match("ebwt", ''.join(files))
+match = re.search("ebwt", ''.join(files))
 
 # Test if database is a single file or a directory with multiple files. If former run index on single file, if latter run index on multiple files with specified threads.
-if isinstance(files, basestring):
-    if options.verbose == True:
-        print "Indexing fasta reference file with Bowtie started at:", time
-    filtering.bowtie_index(rnasfile)
-    if options.verbose == True:
-        print "Indexing fasta reference file with Bowtie finished at:", time
+if not match:
+    if isinstance(files, basestring):
+        if options.verbose == True:
+            print "Indexing RNA database file with Bowtie started at:", time
+        filtering.bowtie_index(options.rnasfile)
+        if options.verbose == True:
+            print "Indexing RNA database file with Bowtie finished at:", time
+    else:
+        if options.verbose == True:
+           print "Indexing multiple RNA database files on", options.bdbthreads, "threads with Bowtie started at:", time
+        process = multiprocessing.Pool(int(options.bdbthreads))
+        process.map(filtering.bowtie_index, files)
+        process.close()
+        process.join()
+        if options.verbose == True:
+            print "Indexing multiple RNA database files on", options.bdbthreads, "threads with Bowtie finished at:", time
 else:
-    if options.verbose == True:
-        print "Indexing multiple fasta reference files on", options.bdbthreads, "threads with Bowtie started at:", time
-    process = multiprocessing.Pool(int(options.bdbthreads))
-    process.map(filtering.bowtie_index, files)
-    process.close()
-    process.join()
-    if options.verbose == True:
-        print "Indexing multiple fasta reference files on", options.bdbthreads, "threads with Bowtie finished at:", time
+    if not isinstance(files, basestring):    
+        files = filtering.get_files(options.rnasfile,".fa")
+        if not files:
+            files = filtering.get_files(options.rnasfile,".fasta") #Change file list to just the fasta files if ebwt files are present.
 
-readsbase = os.path.basename(options.readsfile)
-readsbase = os.path.splitext(readsbase)[0]
+readsbase = filtering.create_output(options.readsfile)
 readsout = options.outdir + "/" + readsbase
+genomebase = filtering.create_output(options.genomefile)
+rnasbase = filtering.create_output(options.rnasfile)
 
-# Wrapper for the bowtie_map function needed to pass parameters to multiprocessing.
-def map_wrap(file_list):
-        filtering.bowtie_map(params, options.outdir + "/" + readsbase + "/" + readsbase + "." + file_list + "um.fq" file_list, options.readsfile, options.outdir + "/" + readsbase + "/" + readsbase + "." + file_list + ".sam")
+params = ("--sam", "--threads", str(options.btthreads), "--un")
+
+def wrap_map_wrap(wrapfiles):
+    (out, err) = filtering.map_wrap(wrapfiles, params, options.readsfile, options.outdir, um=True)
+    return out, err
+    print out, err
 
 # Test if database is a single file or a directory with multiple files. If former run mapping on single file, if latter run mapping on multiple files with specified threads.
-params = ("--sam, --threads, "+ str(options.btthreads) + ", --un")
+
 if isinstance(files, basestring):
     if options.verbose == True:
         print "Mapping reads to RNA database with Bowtie started at:", time
-    bowtie_map(params, readsout + "/" + readsbase + ".filt.fq" options.rnasfile, options.readsfile, readsout + "/" + readsbase + ".sam")
+    bowtie_map(params, rnasfile, readsfile, readsout + "." + rnasbase + ".sam", unmapped=readsout + "." + rnasbase + ".um.fq", um=True)
     if options.verbose == True:
-        print "Indexing fasta reference file with Bowtie finished at:", time
+        print "Mapping reads to RNA database with Bowtie finished at:", time
 else:
     if options.verbose == True:
         print "Mapping reads to multiple RNA databases on", options.bdbmapthreads, "threads with Bowtie started at:", time
     process = multiprocessing.Pool(int(options.bdbmapthreads))
-    process.map(map_wrap, (files))
+    process.map(wrap_map_wrap, files)
     process.close()
     process.join()
     if options.verbose == True:
-        print "Indexing multiple fasta reference files on", options.bdbthreads, "threads with Bowtie finished at:", time
+        print "Mapping reads to multiple RNA databases on", options.bdbthreads, "threads with Bowtie finished at:", time
 
-params = ("--sam, -v, 0, -a, --threads"+ str(int(options.btthreads)))
-
+filt_reads = filtering.get_files(options.outdir, '.um.fq')
+subprocess.call("cat " + ' '.join(filt_reads) + " > " + readsout + ".filt.fq", shell=True)
+params = ("--sam", "-v", "0", "-a", "--threads", str(int(options.btthreads)))
 
 # Map reads not mapped to rna database to genome.
-#if options.verbose == True:
-#    print "Mapping reads to Reference with Bowtie started at:", time
-#bowtie_map(params, options.rnasfile, options.readsfile, readsout + "/" + readsbase + ".sam")
-#if options.verbose == True:
-#    print "Indexing fasta reference file with Bowtie finished at:", time
+
+if options.verbose == True:
+    print "Indexing fasta reference file with Bowtie started at:", time
+(err, out) = filtering.bowtie_index(options.genomefile)
+if options.verbose == True:
+    print "Indexing fasta reference file with Bowtie finished at:", time
+
+if options.verbose == True:
+    print "Mapping reads to Reference with Bowtie started at:", time
+(out, err) = filtering.bowtie_map(params, options.genomefile, readsbase + ".filt.fq", readsout + "." + genomebase + ".sam")
+if options.verbose == True:
+    print "Mapping reads to reference with Bowtie finished at:", time
